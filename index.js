@@ -1,5 +1,7 @@
 const TelegramApi = require('node-telegram-bot-api')
 const {gameOptions, againOptions} = require('./options')
+const sequelize = require('./db')
+const UserModel = require('./models')
 
 const token = '5842971915:AAEYKvSXUUreC2Al62A92Bk5ZJjH3R2JP60'
 
@@ -14,7 +16,14 @@ const startGame = async (chatId) => {
     await bot.sendMessage(chatId, 'Guess the number', gameOptions)
 }
 
-const start = () => {
+const start = async() => {
+    try {
+        await sequelize.authenticate()
+        await sequelize.sync()
+    } catch(e) {
+        console.log('Failed to connect to db', e)
+    }
+
     bot.setMyCommands([
         {command: '/start', description: 'First greeting'},
         {command: '/info', description: 'Get info about user'},
@@ -25,20 +34,26 @@ const start = () => {
         const text = msg.text
         const chatId = msg.chat.id
     
-        if(text === '/start') {
-            await bot.sendSticker(chatId, 'https://tlgrm.eu/_/stickers/ea5/382/ea53826d-c192-376a-b766-e5abc535f1c9/8.webp')
-            return bot.sendMessage(chatId, `Sup, it's my first Telegram-Bot. Here you can play a game, where you need to guess the number.`)
-        }
+        try {
+            if(text === '/start') {
+                await UserModel.create({chatId})
+                await bot.sendSticker(chatId, 'https://tlgrm.eu/_/stickers/ea5/382/ea53826d-c192-376a-b766-e5abc535f1c9/8.webp')
+                return bot.sendMessage(chatId, `Sup, it's my first Telegram-Bot. Here you can play a game, where you need to guess the number.`)
+            }
+        
+            if(text === '/info') {
+                const user = await UserModel.findOne({chatId})
+                return bot.sendMessage(chatId, `You got ${user.right} right answers and ${user.wrong} wrong answers`)
+            }
     
-        if(text === '/info') {
-            return bot.sendMessage(chatId, `Your name is ${msg.from.first_name}`)
+            if(text === '/game') {
+                return startGame(chatId)
+            }
+    
+            return bot.sendMessage(chatId, `I don't get you. Try again!`)
+        } catch(e) {
+            return bot.sendMessage(chatId, 'Oops, an error occured')
         }
-
-        if(text === '/game') {
-            return startGame(chatId)
-        }
-
-        return bot.sendMessage(chatId, `I don't get you. Try again!`)
     })
 
     bot.on('callback_query', async msg => {
@@ -49,10 +64,19 @@ const start = () => {
             return startGame(chatId)
         }
 
-        if(data === chats[chatId]) {
-            return bot.sendMessage(chatId, `Congratulations! You guessed the number - ${chats[chatId]}`, againOptions)
-        } else {
-            return bot.sendMessage(chatId, `Unfourtunately, you got it wrong :( \nThe number was - ${chats[chatId]}`, againOptions)
+        try {
+            const user = await UserModel.findOne({chatId})
+    
+            if(data == chats[chatId]) {
+                user.right += 1
+                await bot.sendMessage(chatId, `Congratulations! You guessed the number - ${chats[chatId]}`, againOptions)
+            } else {
+                user.wrong += 1
+                await bot.sendMessage(chatId, `Unfourtunately, you got it wrong :( \nThe number was - ${chats[chatId]}`, againOptions)
+            }
+            await user.save()
+        } catch(e) {
+            return bot.sendMessage(chatId, 'Oops, an error occured')
         }
     })
 }
